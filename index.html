@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Investment Time Calculator</title>
+  <!-- Bootswatch Darkly theme (Bootstrap) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.0/dist/darkly/bootstrap.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      padding-top: 20px;
+    }
+    .income-period {
+      border: 1px solid rgba(255,255,255,0.2);
+      padding: 15px;
+      margin-bottom: 15px;
+      border-radius: 5px;
+    }
+    .removePeriod {
+      float: right;
+    }
+    #investmentChart {
+      max-height: 400px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-center mb-4">Investment Time Calculator</h1>
+    <div class="row mb-3">
+      <div class="col-md-4">
+        <label for="targetAmount" class="form-label">Target Amount (£):</label>
+        <input type="number" id="targetAmount" class="form-control" value="50000">
+      </div>
+      <div class="col-md-4">
+        <label for="investmentReturn" class="form-label">Annual Investment Return (%):</label>
+        <input type="number" id="investmentReturn" class="form-control" value="5">
+      </div>
+    </div>
+    <h2 class="mt-4">Income Periods</h2>
+    <div id="incomePeriods"></div>
+    <div class="mb-3">
+      <button id="addIncome" class="btn btn-primary me-2">Add Income Period</button>
+      <button id="simulate" class="btn btn-success">Simulate</button>
+    </div>
+    <div id="chartContainer" class="mb-4">
+      <canvas id="investmentChart"></canvas>
+    </div>
+    <h2>Breakdown</h2>
+    <div id="breakdown"></div>
+  </div>
+
+<script>
+  // UK tax brackets constants
+  const TAX_BRACKETS = [
+    { name: "Personal Allowance", threshold: 12570, rate: 0 },
+    { name: "Basic Rate", threshold: 50270, rate: 0.20 },
+    { name: "Higher Rate", threshold: 125140, rate: 0.40 },
+    { name: "Additional Rate", threshold: Infinity, rate: 0.45 }
+  ];
+
+  // Calculate net income after UK taxes given a gross income.
+  // Also returns a breakdown of each tax bracket.
+  function calculateTaxBreakdown(gross) {
+    let breakdown = [];
+    let net = 0;
+    let previousThreshold = 0;
+    let remaining = gross;
+    
+    TAX_BRACKETS.forEach((bracket) => {
+      let taxable = 0;
+      if (gross > bracket.threshold) {
+        taxable = bracket.threshold - previousThreshold;
+      } else {
+        taxable = Math.max(0, remaining);
+      }
+      let taxPaid = taxable * bracket.rate;
+      let netForBracket = taxable - taxPaid;
+      breakdown.push({
+        bracket: bracket.name,
+        taxable: taxable,
+        rate: bracket.rate,
+        taxPaid: taxPaid,
+        net: netForBracket
+      });
+      net += netForBracket;
+      previousThreshold = bracket.threshold;
+      remaining = gross - previousThreshold;
+      if (remaining <= 0) return;
+    });
+    return { netIncome: net, breakdown: breakdown };
+  }
+
+  // Add a new income period block
+  function addIncomePeriod(income = 20000, years = 1, investPerc = 10) {
+    const container = document.createElement('div');
+    container.className = 'income-period';
+    container.innerHTML = `
+      <button class="btn btn-danger btn-sm removePeriod">Remove</button>
+      <div class="mb-3">
+        <label class="form-label">Annual Gross Income (£):</label>
+        <input type="number" class="grossIncome form-control" value="${income}">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Number of Years:</label>
+        <input type="number" class="numYears form-control" value="${years}" min="1">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Investment Percentage: <span class="investPercDisplay">${investPerc}%</span></label>
+        <input type="range" class="investPerc form-range" value="${investPerc}" min="0" max="50">
+      </div>
+    `;
+    document.getElementById('incomePeriods').appendChild(container);
+
+    // Update slider display
+    container.querySelector('.investPerc').addEventListener('input', function() {
+      container.querySelector('.investPercDisplay').textContent = this.value + '%';
+    });
+    // Remove income period
+    container.querySelector('.removePeriod').addEventListener('click', function() {
+      container.remove();
+    });
+  }
+
+  // Add initial income period
+  addIncomePeriod();
+
+  document.getElementById('addIncome').addEventListener('click', function() {
+    addIncomePeriod();
+  });
+
+  // Global variable to hold the chart
+  let chart;
+
+  // Simulation function
+  document.getElementById('simulate').addEventListener('click', function() {
+    const targetAmount = parseFloat(document.getElementById('targetAmount').value);
+    const annualReturn = parseFloat(document.getElementById('investmentReturn').value) / 100;
+    const periods = document.querySelectorAll('.income-period');
+
+    // Array to hold tax breakdown details for display
+    let breakdownHTML = '';
+
+    // Create an array of income contributions per year.
+    // Also build a breakdown summary.
+    let contributions = [];
+    periods.forEach((period, index) => {
+      const grossIncome = parseFloat(period.querySelector('.grossIncome').value);
+      const numYears = parseInt(period.querySelector('.numYears').value);
+      const investPerc = parseFloat(period.querySelector('.investPerc').value) / 100;
+      
+      // Calculate tax breakdown for this period
+      const taxResult = calculateTaxBreakdown(grossIncome);
+      
+      breakdownHTML += `<h5>Income Period ${index+1}</h5>`;
+      breakdownHTML += `<p>Gross Income: £${grossIncome.toFixed(2)} for ${numYears} year(s)</p>`;
+      breakdownHTML += `<table class="table table-sm table-dark">
+                          <thead>
+                            <tr>
+                              <th>Bracket</th>
+                              <th>Taxable (£)</th>
+                              <th>Rate</th>
+                              <th>Tax Paid (£)</th>
+                              <th>Net (£)</th>
+                            </tr>
+                          </thead>
+                          <tbody>`;
+      taxResult.breakdown.forEach(item => {
+        // Only show brackets where taxable amount is positive.
+        if(item.taxable > 0){
+          breakdownHTML += `<tr>
+                              <td>${item.bracket}</td>
+                              <td>${item.taxable.toFixed(2)}</td>
+                              <td>${(item.rate*100).toFixed(0)}%</td>
+                              <td>${item.taxPaid.toFixed(2)}</td>
+                              <td>${item.net.toFixed(2)}</td>
+                            </tr>`;
+        }
+      });
+      breakdownHTML += `</tbody></table>`;
+      breakdownHTML += `<p>Net Income: £${taxResult.netIncome.toFixed(2)} | Investment (${(investPerc*100).toFixed(0)}%): £${(taxResult.netIncome * investPerc).toFixed(2)}</p><hr>`;
+
+      // For each year in this income period, push the yearly contribution.
+      for (let i = 0; i < numYears; i++) {
+        const contribution = taxResult.netIncome * investPerc;
+        contributions.push(contribution);
+      }
+    });
+    
+    // Display breakdown in the dedicated section.
+    document.getElementById('breakdown').innerHTML = breakdownHTML;
+    
+    // Run simulation: each year add contribution (if available) and compound.
+    let balance = 0;
+    let year = 0;
+    let dataPoints = [];
+    // Continue simulation until target reached or we simulate extra 100 years.
+    while (balance < targetAmount && year < contributions.length + 100) {
+      if (year < contributions.length) {
+        balance += contributions[year];
+      }
+      balance = balance * (1 + annualReturn);
+      dataPoints.push({ year: year + 1, balance: balance });
+      year++;
+    }
+    drawChart(dataPoints, targetAmount);
+  });
+
+  // Draw chart using Chart.js with annotation plugin.
+  function drawChart(dataPoints, targetAmount) {
+    const ctx = document.getElementById('investmentChart').getContext('2d');
+    const labels = dataPoints.map(dp => dp.year);
+    const data = dataPoints.map(dp => dp.balance.toFixed(2));
+
+    if (chart) {
+      chart.destroy();
+    }
+
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Accumulated Investment (£)',
+          data: data,
+          borderColor: 'cyan',
+          fill: false,
+          tension: 0.1
+        }]
+      },
+      options: {
+        plugins: {
+          annotation: {
+            annotations: {
+              targetLine: {
+                type: 'line',
+                yMin: targetAmount,
+                yMax: targetAmount,
+                borderColor: 'red',
+                borderWidth: 2,
+                label: {
+                  content: 'Target: £' + targetAmount,
+                  enabled: true,
+                  position: 'end'
+                }
+              },
+              milestone10k: {
+                type: 'line',
+                yMin: 10000,
+                yMax: 10000,
+                borderColor: 'lime',
+                borderDash: [5, 5],
+                borderWidth: 1,
+                label: {
+                  content: '£10k',
+                  enabled: true,
+                  position: 'end'
+                }
+              },
+              milestone20k: {
+                type: 'line',
+                yMin: 20000,
+                yMax: 20000,
+                borderColor: 'lime',
+                borderDash: [5, 5],
+                borderWidth: 1,
+                label: {
+                  content: '£20k',
+                  enabled: true,
+                  position: 'end'
+                }
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'Amount (£)' }
+          },
+          x: {
+            title: { display: true, text: 'Year' }
+          }
+        }
+      }
+    });
+  }
+
+  // Load the Chart.js annotation plugin and register it.
+  const script = document.createElement('script');
+  script.src = "https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.1.0/dist/chartjs-plugin-annotation.min.js";
+  script.onload = () => {
+    Chart.register(window.ChartAnnotation);
+    console.log("Annotation plugin loaded and registered.");
+  };
+  document.head.appendChild(script);
+</script>
+</body>
+</html>
